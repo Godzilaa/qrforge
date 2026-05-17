@@ -41,11 +41,15 @@ function detectBrowser(ua: string): string {
   return "Other";
 }
 
-function getBaseUrl(c: { req: { url: string } }): string {
+function getBaseUrl(c: { req: { url: string; header: (k: string) => string | undefined } }): string {
+  // Always prefer the explicit WEBSITE_URL env var (set by Runable)
   const websiteUrl = process.env.WEBSITE_URL;
   if (websiteUrl) return websiteUrl.replace(/\/$/, "");
+  // Fallback: respect x-forwarded-proto from reverse proxy so we get https, not http
   const u = new URL(c.req.url);
-  return `${u.protocol}//${u.host}`;
+  const proto = c.req.header("x-forwarded-proto") || u.protocol.replace(":", "");
+  const host = c.req.header("x-forwarded-host") || u.host;
+  return `${proto}://${host}`;
 }
 
 // ─── app ───────────────────────────────────────────────────────────────────
