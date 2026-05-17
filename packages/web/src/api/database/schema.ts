@@ -4,6 +4,8 @@ export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   email: text("email").notNull().unique(),
   name: text("name"),
+  avatar: text("avatar"),
+  googleId: text("google_id").unique(),
   plan: text("plan").notNull().default("free"), // free | pro
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -16,8 +18,8 @@ export const qrCodes = sqliteTable("qr_codes", {
   type: text("type").notNull().default("static"), // static | dynamic
   qrType: text("qr_type").notNull().default("url"), // url | wifi | vcard | text | email | sms
   label: text("label"),
-  content: text("content").notNull(), // the actual encoded data
-  styleConfig: text("style_config"), // JSON: { fg, bg, cornerStyle, dotStyle }
+  content: text("content").notNull(),
+  styleConfig: text("style_config"), // JSON: { fg, bg }
   shortCode: text("short_code").unique(), // for dynamic QR redirect
   destinationUrl: text("destination_url"), // for dynamic QR
   downloads: integer("downloads").notNull().default(0),

@@ -29,7 +29,7 @@ export function Navbar() {
           </Link>
           {user && (
             <Link to="/dashboard">
-              <span className={`flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer transition-colors ${location === "/dashboard" ? "text-[#00FF41]" : "text-[#888] hover:text-white"}`}>
+              <span className={`flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer transition-colors ${location.startsWith("/dashboard") ? "text-[#00FF41]" : "text-[#888] hover:text-white"}`}>
                 <Grid size={13} />
                 DASHBOARD
               </span>
@@ -52,8 +52,27 @@ export function Navbar() {
           )}
           {user ? (
             <div className="flex items-center gap-3">
-              <span className="text-[#555] text-xs hidden sm:block truncate max-w-[120px]">{user.email}</span>
-              <button onClick={logout} className="flex items-center gap-1 text-[#555] hover:text-[#ff3333] text-xs transition-colors">
+              {/* Avatar from Google or initials fallback */}
+              {user.avatar ? (
+                <img
+                  src={user.avatar}
+                  alt={user.name || user.email}
+                  className="w-7 h-7 rounded-full border border-[#1a1a1a] object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-full border border-[#1a1a1a] bg-[#0a0a0a] flex items-center justify-center text-[10px] text-[#555] font-bold">
+                  {(user.name || user.email).charAt(0).toUpperCase()}
+                </div>
+              )}
+              <span className="text-[#555] text-xs hidden sm:block truncate max-w-[120px]">
+                {user.name || user.email}
+              </span>
+              <button
+                onClick={logout}
+                className="flex items-center gap-1 text-[#555] hover:text-[#ff3333] text-xs transition-colors"
+                title="Sign out"
+              >
                 <LogOut size={13} />
               </button>
             </div>

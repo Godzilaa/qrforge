@@ -6,6 +6,8 @@ import { eq, desc, sql } from "drizzle-orm";
 import QRCode from "qrcode";
 import { nanoid } from "nanoid";
 
+// ─── helpers ───────────────────────────────────────────────────────────────
+
 function buildQRContent(qrType: string, data: Record<string, string>): string {
   switch (qrType) {
     case "url":
@@ -39,16 +41,24 @@ function detectBrowser(ua: string): string {
   return "Other";
 }
 
-const app = new Hono()
-  .use(cors({ origin: (origin) => origin ?? "*", credentials: true, exposeHeaders: ["set-auth-token"] }))
+function getBaseUrl(c: { req: { url: string } }): string {
+  const websiteUrl = process.env.WEBSITE_URL;
+  if (websiteUrl) return websiteUrl.replace(/\/$/, "");
+  const u = new URL(c.req.url);
+  return `${u.protocol}//${u.host}`;
+}
 
-  // === QR Redirect (scan tracking) ===
+// ─── app ───────────────────────────────────────────────────────────────────
+
+const app = new Hono()
+  .use(cors({ origin: (origin) => origin ?? "*", credentials: true }))
+
+  // ── QR scan redirect (before basePath so it's at root /q/:code) ──
   .get("/q/:code", async (c) => {
     const { code } = c.req.param();
     const [qr] = await db.select().from(schema.qrCodes).where(eq(schema.qrCodes.shortCode, code)).limit(1);
     if (!qr || !qr.destinationUrl) return c.text("Not found", 404);
 
-    // log scan
     const ua = c.req.header("user-agent") || "";
     await db.insert(schema.scans).values({
       qrCodeId: qr.id,
@@ -62,12 +72,124 @@ const app = new Hono()
     return c.redirect(qr.destinationUrl, 302);
   })
 
+  // ── Google OAuth callback (before basePath, no /api prefix) ──
+  .get("/auth/google/callback", async (c) => {
+    const code = c.req.query("code");
+    const error = c.req.query("error");
+    const base = getBaseUrl(c);
+
+    if (error || !code) {
+      return c.redirect(`${base}/login?error=oauth_denied`);
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return c.redirect(`${base}/login?error=not_configured`);
+    }
+
+    try {
+      // Exchange code for tokens
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: `${base}/auth/google/callback`,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      const tokens = await tokenRes.json() as { access_token?: string; error?: string };
+      if (!tokens.access_token) {
+        console.error("Token exchange failed:", tokens);
+        return c.redirect(`${base}/login?error=token_failed`);
+      }
+
+      // Fetch Google user profile
+      const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      });
+      const profile = await profileRes.json() as {
+        id: string;
+        email: string;
+        name: string;
+        picture: string;
+      };
+
+      if (!profile.email) {
+        return c.redirect(`${base}/login?error=no_email`);
+      }
+
+      // Upsert user — find by googleId or email
+      let user = (await db.select().from(schema.users)
+        .where(eq(schema.users.googleId, profile.id)).limit(1))[0];
+
+      if (!user) {
+        // Maybe they signed up by email before — link accounts
+        const byEmail = (await db.select().from(schema.users)
+          .where(eq(schema.users.email, profile.email)).limit(1))[0];
+
+        if (byEmail) {
+          [user] = await db.update(schema.users)
+            .set({ googleId: profile.id, avatar: profile.picture, name: byEmail.name || profile.name })
+            .where(eq(schema.users.id, byEmail.id))
+            .returning();
+        } else {
+          [user] = await db.insert(schema.users).values({
+            email: profile.email,
+            name: profile.name || null,
+            avatar: profile.picture || null,
+            googleId: profile.id,
+            plan: "free",
+          }).returning();
+        }
+      } else {
+        // Refresh avatar/name from Google
+        [user] = await db.update(schema.users)
+          .set({ avatar: profile.picture, name: user.name || profile.name })
+          .where(eq(schema.users.id, user.id))
+          .returning();
+      }
+
+      // Pass user to the frontend via a redirect with a short-lived token in query param
+      // We encode the user as base64 JSON — client reads it, clears URL
+      const payload = Buffer.from(JSON.stringify(user)).toString("base64url");
+      return c.redirect(`${base}/dashboard?auth=${payload}`);
+
+    } catch (err) {
+      console.error("Google OAuth error:", err);
+      return c.redirect(`${base}/login?error=server_error`);
+    }
+  })
+
   .basePath("api")
-  .use(cors({ origin: (origin) => origin ?? "*", credentials: true, exposeHeaders: ["set-auth-token"] }))
+  .use(cors({ origin: (origin) => origin ?? "*", credentials: true }))
   .get("/ping", (c) => c.json({ message: `Pong! ${Date.now()}` }, 200))
   .get("/health", (c) => c.json({ status: "ok" }, 200))
 
-  // === QR CODES ===
+  // ── Google OAuth initiation ──
+  .get("/auth/google", (c) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) return c.json({ error: "Google OAuth not configured" }, 503);
+
+    const base = getBaseUrl(c);
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: `${base}/auth/google/callback`,
+      response_type: "code",
+      scope: "openid email profile",
+      access_type: "online",
+      prompt: "select_account",
+    });
+
+    return c.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` }, 200);
+  })
+
+  // ── QR CODES ──
   .get("/qr", async (c) => {
     const userId = c.req.query("userId") ? parseInt(c.req.query("userId")!) : null;
     let rows;
@@ -76,14 +198,13 @@ const app = new Hono()
     } else {
       rows = await db.select().from(schema.qrCodes).orderBy(desc(schema.qrCodes.createdAt)).limit(50);
     }
-    // attach scan counts
     const withCounts = await Promise.all(
       rows.map(async (qr) => {
         const [countRow] = await db
           .select({ count: sql<number>`count(*)` })
           .from(schema.scans)
           .where(eq(schema.scans.qrCodeId, qr.id));
-        return { ...qr, scanCount: countRow?.count ?? 0 };
+        return { ...qr, scanCount: Number(countRow?.count ?? 0) };
       })
     );
     return c.json({ qrCodes: withCounts }, 200);
@@ -93,13 +214,20 @@ const app = new Hono()
     const body = await c.req.json();
     const { userId, qrType, label, data, style, isDynamic } = body;
 
-    const content = qrType === "dynamic_url"
-      ? "" // will be set after insert
-      : buildQRContent(qrType, data);
+    // Gate: dynamic QR requires pro plan
+    if (isDynamic && userId) {
+      const [u] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
+      if (!u || u.plan !== "pro") {
+        return c.json({ error: "Dynamic QR codes require a Pro plan." }, 403);
+      }
+    }
 
+    const content = buildQRContent(qrType === "dynamic_url" ? "url" : qrType, data);
     const shortCode = isDynamic ? nanoid(8) : null;
     const destinationUrl = isDynamic ? (data.url || "") : null;
-    const finalContent = isDynamic ? `${c.req.url.split("/api")[0]}/q/${shortCode}` : content;
+    const finalContent = isDynamic
+      ? `${getBaseUrl(c)}/q/${shortCode}`
+      : content;
 
     const [qr] = await db.insert(schema.qrCodes).values({
       userId: userId || null,
@@ -125,12 +253,24 @@ const app = new Hono()
       .from(schema.scans)
       .where(eq(schema.scans.qrCodeId, id));
 
-    return c.json({ qr: { ...qr, scanCount: countRow?.count ?? 0 } }, 200);
+    return c.json({ qr: { ...qr, scanCount: Number(countRow?.count ?? 0) } }, 200);
   })
 
   .patch("/qr/:id", async (c) => {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
+
+    // Gate: editing destination URL on dynamic QR requires pro
+    if (body.destinationUrl !== undefined) {
+      const [qr] = await db.select().from(schema.qrCodes).where(eq(schema.qrCodes.id, id)).limit(1);
+      if (qr?.type === "dynamic" && body.userId) {
+        const [u] = await db.select().from(schema.users).where(eq(schema.users.id, body.userId)).limit(1);
+        if (!u || u.plan !== "pro") {
+          return c.json({ error: "Editing dynamic QR destination requires Pro plan." }, 403);
+        }
+      }
+    }
+
     const [qr] = await db.update(schema.qrCodes)
       .set({ destinationUrl: body.destinationUrl, label: body.label })
       .where(eq(schema.qrCodes.id, id))
@@ -145,14 +285,33 @@ const app = new Hono()
     return c.json({ ok: true }, 200);
   })
 
-  // === ANALYTICS ===
+  // ── ANALYTICS (gated: pro only for full data) ──
   .get("/qr/:id/analytics", async (c) => {
     const id = parseInt(c.req.param("id"));
+    const userId = c.req.query("userId") ? parseInt(c.req.query("userId")!) : null;
+
+    // Verify ownership
+    const [qr] = await db.select().from(schema.qrCodes).where(eq(schema.qrCodes.id, id)).limit(1);
+    if (!qr) return c.json({ error: "Not found" }, 404);
+
+    // Check if user is pro
+    let isPro = false;
+    if (userId) {
+      const [u] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
+      isPro = u?.plan === "pro";
+    }
+
     const scanRows = await db.select().from(schema.scans)
       .where(eq(schema.scans.qrCodeId, id))
       .orderBy(desc(schema.scans.scannedAt));
 
-    // Device breakdown
+    const total = scanRows.length;
+
+    // Free users only get total count
+    if (!isPro) {
+      return c.json({ total, devices: [], browsers: [], timeline: [], recentScans: [], locked: true }, 200);
+    }
+
     const deviceMap: Record<string, number> = {};
     const browserMap: Record<string, number> = {};
     const dayMap: Record<string, number> = {};
@@ -172,15 +331,16 @@ const app = new Hono()
       .slice(-30);
 
     return c.json({
-      total: scanRows.length,
+      total,
       devices: Object.entries(deviceMap).map(([name, value]) => ({ name, value })),
       browsers: Object.entries(browserMap).map(([name, value]) => ({ name, value })),
       timeline,
       recentScans: scanRows.slice(0, 20),
+      locked: false,
     }, 200);
   })
 
-  // === QR IMAGE GENERATION ===
+  // ── QR IMAGE ──
   .get("/qr/:id/image", async (c) => {
     const id = parseInt(c.req.param("id"));
     const fmt = c.req.query("format") || "png";
@@ -210,7 +370,7 @@ const app = new Hono()
     return c.body(buf);
   })
 
-  // === USER PLAN (simple, no auth for MVP) ===
+  // ── USER ──
   .get("/user/:id", async (c) => {
     const id = parseInt(c.req.param("id"));
     const [user] = await db.select().from(schema.users).where(eq(schema.users.id, id)).limit(1);
@@ -220,6 +380,7 @@ const app = new Hono()
 
   .post("/user", async (c) => {
     const body = await c.req.json();
+    if (!body.email) return c.json({ error: "Email required" }, 400);
     const existing = await db.select().from(schema.users).where(eq(schema.users.email, body.email)).limit(1);
     if (existing.length > 0) return c.json({ user: existing[0] }, 200);
     const [user] = await db.insert(schema.users).values({
@@ -228,6 +389,20 @@ const app = new Hono()
       plan: "free",
     }).returning();
     return c.json({ user }, 201);
+  })
+
+  // Admin only: manually upgrade a user to pro (use from curl/postman)
+  .post("/user/:id/upgrade", async (c) => {
+    const id = parseInt(c.req.param("id"));
+    const secret = c.req.header("x-admin-secret");
+    if (secret !== process.env.ADMIN_SECRET && process.env.NODE_ENV === "production") {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const [user] = await db.update(schema.users)
+      .set({ plan: "pro" })
+      .where(eq(schema.users.id, id))
+      .returning();
+    return c.json({ user }, 200);
   });
 
 export type AppType = typeof app;
