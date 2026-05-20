@@ -7,6 +7,7 @@ export const users = pgTable("users", {
   avatar: text("avatar"),
   googleId: text("google_id").unique(),
   plan: text("plan").notNull().default("free"), // free | pro
+  dodoSubscriptionId: text("dodo_subscription_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

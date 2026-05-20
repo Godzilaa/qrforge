@@ -123,10 +123,19 @@ function QRCard({
 }
 
 export default function Dashboard() {
-  const { user, isPro } = useUser();
+  const { user, isPro, refresh } = useUser();
   const [, setLocation] = useLocation();
   const [qrCodes, setQrCodes] = useState<QRCode[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Handle post-checkout redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgraded") === "1") {
+      window.history.replaceState({}, "", "/dashboard");
+      refresh();
+    }
+  }, []);
 
   useEffect(() => {
     if (!user) {

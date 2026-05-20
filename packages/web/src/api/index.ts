@@ -5,6 +5,7 @@ import * as schema from "./database/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import QRCode from "qrcode";
 import { nanoid } from "nanoid";
+import DodoPayments from "dodopayments";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
@@ -168,6 +169,51 @@ const app = new Hono()
       console.error("Google OAuth error:", err);
       return c.redirect(`${base}/login?error=server_error`);
     }
+  })
+
+  // ── Dodo webhook (no /api prefix, raw body needed) ──
+  .post("/webhook/dodo", async (c) => {
+    const rawBody = await c.req.text();
+    const webhookSecret = process.env.DODO_WEBHOOK_SECRET;
+
+    if (webhookSecret) {
+      const dodo = new DodoPayments({ bearerToken: process.env.DODO_API_KEY! });
+      try {
+        dodo.webhooks.unwrap(rawBody, {
+          headers: Object.fromEntries(c.req.raw.headers.entries()),
+          key: webhookSecret,
+        });
+      } catch {
+        return c.json({ error: "Invalid webhook signature" }, 401);
+      }
+    }
+
+    const event = JSON.parse(rawBody) as { type: string; data: Record<string, unknown> };
+
+    if (event.type === "subscription.active") {
+      const sub = event.data as { subscription_id: string; metadata?: Record<string, string>; customer?: { email?: string } };
+      const userId = sub.metadata?.user_id;
+      const email = sub.customer?.email;
+
+      if (userId) {
+        await db.update(schema.users)
+          .set({ plan: "pro", dodoSubscriptionId: sub.subscription_id })
+          .where(eq(schema.users.id, parseInt(userId)));
+      } else if (email) {
+        await db.update(schema.users)
+          .set({ plan: "pro", dodoSubscriptionId: sub.subscription_id })
+          .where(eq(schema.users.email, email));
+      }
+    }
+
+    if (event.type === "subscription.cancelled" || event.type === "subscription.expired") {
+      const sub = event.data as { subscription_id: string };
+      await db.update(schema.users)
+        .set({ plan: "free", dodoSubscriptionId: null })
+        .where(eq(schema.users.dodoSubscriptionId, sub.subscription_id));
+    }
+
+    return c.json({ ok: true });
   })
 
   .basePath("api")
@@ -396,6 +442,26 @@ const app = new Hono()
   })
 
   // Admin only: manually upgrade a user to pro (use from curl/postman)
+  // ── Dodo checkout session ──
+  .post("/checkout", async (c) => {
+    const body = await c.req.json() as { userId: number; email: string; name?: string };
+    const base = getBaseUrl(c);
+
+    const dodo = new DodoPayments({
+      bearerToken: process.env.DODO_API_KEY!,
+      environment: "live_mode",
+    });
+
+    const session = await dodo.checkoutSessions.create({
+      product_cart: [{ product_id: process.env.DODO_PRODUCT_ID!, quantity: 1 }],
+      customer: { email: body.email, name: body.name || body.email, create_new_customer: false },
+      metadata: { user_id: String(body.userId) },
+      return_url: `${base}/dashboard?upgraded=1`,
+    });
+
+    return c.json({ url: (session as unknown as { url?: string; payment_link?: string }).url || (session as unknown as { url?: string; payment_link?: string }).payment_link }, 200);
+  })
+
   .post("/user/:id/upgrade", async (c) => {
     const id = parseInt(c.req.param("id"));
     const secret = c.req.header("x-admin-secret");

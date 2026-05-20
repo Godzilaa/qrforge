@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { Navbar } from "../components/Navbar";
 import { AdBanner } from "../components/AdBanner";
@@ -42,6 +43,31 @@ const FAQ = [
 
 export default function Pricing() {
   const { user, isPro } = useUser();
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+
+  const handleUpgrade = async () => {
+    if (!user) { window.location.href = "/login"; return; }
+    setCheckoutLoading(true);
+    setCheckoutError("");
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, email: user.email, name: user.name }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setCheckoutError("Failed to start checkout. Try again.");
+      }
+    } catch {
+      setCheckoutError("Network error. Try again.");
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-black text-white font-mono">
@@ -132,12 +158,20 @@ export default function Pricing() {
                 ✓ YOUR CURRENT PLAN
               </button>
             ) : (
-              <button
-                className="w-full bg-[#00FF41] text-black font-bold text-xs py-2.5 hover:bg-[#00cc33] transition-colors"
-                onClick={() => alert("Payments coming soon! Contact us to upgrade.")}
-              >
-                UPGRADE TO PRO
-              </button>
+              <>
+                {checkoutError && (
+                  <div className="text-[#ff4444] text-xs border border-[#ff4444]/20 bg-[#ff4444]/5 px-3 py-2 mb-2">
+                    {checkoutError}
+                  </div>
+                )}
+                <button
+                  className="w-full bg-[#00FF41] text-black font-bold text-xs py-2.5 hover:bg-[#00cc33] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={handleUpgrade}
+                  disabled={checkoutLoading}
+                >
+                  {checkoutLoading ? "LOADING..." : "UPGRADE TO PRO"}
+                </button>
+              </>
             )}
           </div>
         </div>
