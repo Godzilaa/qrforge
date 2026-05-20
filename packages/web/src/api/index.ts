@@ -459,7 +459,7 @@ const app = new Hono()
       return_url: `${base}/dashboard?upgraded=1`,
     });
 
-    return c.json({ url: (session as unknown as { url?: string; payment_link?: string }).url || (session as unknown as { url?: string; payment_link?: string }).payment_link }, 200);
+    return c.json({ url: (session as unknown as { checkout_url?: string }).checkout_url }, 200);
   })
 
   .post("/user/:id/upgrade", async (c) => {
