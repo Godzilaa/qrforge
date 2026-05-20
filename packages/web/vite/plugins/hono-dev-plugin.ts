@@ -6,7 +6,7 @@ export default function honoDevPlugin(): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const url = req.url ?? "";
-        if (!url.startsWith("/api") && !url.startsWith("/auth/") && !url.startsWith("/q/")) return next();
+        if (!url.startsWith("/api") && !url.startsWith("/auth/") && !url.startsWith("/q/") && !url.startsWith("/webhook/")) return next();
 
         try {
           const request = await toWebRequest(req);
