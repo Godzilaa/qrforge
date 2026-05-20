@@ -1,42 +1,36 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, serial, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
-export const users = sqliteTable("users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
   avatar: text("avatar"),
   googleId: text("google_id").unique(),
   plan: text("plan").notNull().default("free"), // free | pro
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .$defaultFn(() => new Date()),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const qrCodes = sqliteTable("qr_codes", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const qrCodes = pgTable("qr_codes", {
+  id: serial("id").primaryKey(),
   userId: integer("user_id"),
   type: text("type").notNull().default("static"), // static | dynamic
-  qrType: text("qr_type").notNull().default("url"), // url | wifi | vcard | text | email | sms
+  qrType: text("qr_type").notNull().default("url"),
   label: text("label"),
   content: text("content").notNull(),
-  styleConfig: text("style_config"), // JSON: { fg, bg }
-  shortCode: text("short_code").unique(), // for dynamic QR redirect
-  destinationUrl: text("destination_url"), // for dynamic QR
+  styleConfig: text("style_config"),
+  shortCode: text("short_code").unique(),
+  destinationUrl: text("destination_url"),
   downloads: integer("downloads").notNull().default(0),
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .$defaultFn(() => new Date()),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const scans = sqliteTable("scans", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const scans = pgTable("scans", {
+  id: serial("id").primaryKey(),
   qrCodeId: integer("qr_code_id").notNull(),
-  scannedAt: integer("scanned_at", { mode: "timestamp" })
-    .notNull()
-    .$defaultFn(() => new Date()),
+  scannedAt: timestamp("scanned_at").notNull().defaultNow(),
   country: text("country"),
   city: text("city"),
-  deviceType: text("device_type"), // mobile | desktop | tablet
+  deviceType: text("device_type"),
   browser: text("browser"),
   referrer: text("referrer"),
 });
