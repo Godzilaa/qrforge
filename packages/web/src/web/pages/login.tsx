@@ -4,20 +4,15 @@ import { Navbar } from "../components/Navbar";
 import { useUser } from "../hooks/useUser";
 
 export default function Login() {
-  const { user, login } = useUser();
+  const { user } = useUser();
   const [, setLocation] = useLocation();
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Redirect if already logged in
   useEffect(() => {
     if (user) setLocation("/dashboard");
   }, [user, setLocation]);
 
-  // Show OAuth error from query param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const err = params.get("error");
@@ -52,37 +47,11 @@ export default function Login() {
     }
   };
 
-  const handleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch("/api/user", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), name: name.trim() || null }),
-      });
-      const data = await res.json();
-      if (data.user) {
-        login(data.user);
-        setLocation("/dashboard");
-      } else {
-        setError("Something went wrong. Try again.");
-      }
-    } catch {
-      setError("Network error. Try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-black text-white font-mono">
       <Navbar />
       <div className="flex items-center justify-center min-h-[calc(100vh-56px)] px-4">
         <div className="w-full max-w-sm">
-          {/* Header */}
           <div className="mb-8 text-center">
             <div className="text-[#00FF41] text-4xl font-bold mb-2">
               QR<span className="text-white">Forge</span>
@@ -94,20 +63,24 @@ export default function Login() {
             <div className="p-6 space-y-4">
               <div className="text-[#00FF41] text-xs">
                 <span className="opacity-50">$ </span>
-                <span className="blink">authenticate</span>
+                <span>authenticate</span>
               </div>
 
-              {/* Google button */}
+              {error && (
+                <div className="text-[#ff4444] text-xs border border-[#ff4444]/20 bg-[#ff4444]/5 px-3 py-2">
+                  {error}
+                </div>
+              )}
+
               <button
                 onClick={handleGoogleLogin}
-                disabled={googleLoading || loading}
+                disabled={googleLoading}
                 className="w-full flex items-center justify-center gap-3 border border-[#2a2a2a] hover:border-[#00FF41]/50 bg-[#0a0a0a] hover:bg-[#00FF41]/5 text-white text-sm py-3 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {googleLoading ? (
                   <span className="text-[#555] text-xs">CONNECTING TO GOOGLE...</span>
                 ) : (
                   <>
-                    {/* Google G logo SVG */}
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                       <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
                       <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -118,55 +91,6 @@ export default function Login() {
                   </>
                 )}
               </button>
-
-              {/* Divider */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 border-t border-[#111]" />
-                <span className="text-[#333] text-[10px]">OR</span>
-                <div className="flex-1 border-t border-[#111]" />
-              </div>
-
-              {/* Email form */}
-              <form onSubmit={handleEmailSubmit} className="space-y-3">
-                <div className="space-y-1">
-                  <label className="text-[#555] text-[10px] uppercase tracking-widest">Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    placeholder="you@example.com"
-                    className="w-full bg-black border border-[#1a1a1a] focus:border-[#00FF41] outline-none px-3 py-2 text-sm text-white placeholder-[#333] transition-colors"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[#555] text-[10px] uppercase tracking-widest">
-                    Name <span className="text-[#333]">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Your name"
-                    className="w-full bg-black border border-[#1a1a1a] focus:border-[#00FF41] outline-none px-3 py-2 text-sm text-white placeholder-[#333] transition-colors"
-                  />
-                </div>
-
-                {error && (
-                  <div className="text-[#ff4444] text-xs border border-[#ff4444]/20 bg-[#ff4444]/5 px-3 py-2">
-                    {error}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={loading || googleLoading}
-                  className="w-full bg-[#00FF41] text-black font-bold text-sm py-2.5 hover:bg-[#00cc33] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? "CONNECTING..." : "ENTER WITH EMAIL"}
-                </button>
-              </form>
 
               <p className="text-[#2a2a2a] text-[10px] text-center">
                 New user? Account created automatically.
